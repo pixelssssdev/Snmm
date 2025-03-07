@@ -1,0 +1,183 @@
+loadstring([[
+    function LPH_NO_VIRTUALIZE(f) return f end;
+]])()
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+getgenv().Rake = {
+    Settings = {
+        Prediction = 0.04,
+        JumpOffSet = 0.06,
+        ForceHit = true,
+        AimPart = "Head",
+        Misc = {
+            AutoReload = true,
+            AutoShoot = true,  -- Auto-shoot enabled
+        },
+    }
+}
+
+local enabled = true
+local Plr, ClosestPart = nil, nil
+
+-- Find the nearest enemy player
+local function findNearestEnemy()
+    local ClosestDistance = math.huge
+    local ClosestPlayer = nil
+    for _, Player in pairs(Players:GetPlayers()) do
+        if Player ~= LocalPlayer and Player.Character then
+            local Character = Player.Character
+            if Character:FindFirstChild("Humanoid") and Character.Humanoid.Health > 0 then
+                local Part = Character:FindFirstChild(getgenv().Rake.Settings.AimPart)
+                if Part then
+                    local Distance = (LocalPlayer.Character[getgenv().Rake.Settings.AimPart].Position - Part.Position).Magnitude
+                    if Distance < ClosestDistance then
+                        ClosestPlayer = Player
+                        ClosestPart = Part
+                        ClosestDistance = Distance
+                    end
+                end
+            end
+        end
+    end
+    return ClosestPlayer, ClosestPart
+end
+
+-- Function to check if the character has a force field
+local function isInForceField(character)
+    for _, child in pairs(character:GetChildren()) do
+        if child:IsA("ForceField") then
+            return true
+        end
+    end
+    return false
+end
+
+-- Highlight the target player
+local function highlight(plr)
+    if plr and plr.Character then
+        for _, obj in pairs(plr.Character:GetChildren()) do
+            if obj:IsA("Highlight") then
+                obj:Destroy()
+            end
+        end
+        local highlight = Instance.new("Highlight")
+        highlight.Parent = plr.Character
+        highlight.FillColor = Color3.new(0.411765, 0.501961, 1.000000)
+        highlight.OutlineColor = Color3.new(0.031373, 0.031373, 0.031373)
+        highlight.FillTransparency = 0.6
+        highlight.OutlineTransparency = 0
+    end
+end
+
+local lastForceHitTime = 0
+local forceHitCooldown = 0.1  -- Throttle to once every 0.1 seconds
+
+-- RunService.Heartbeat to periodically check for force hits and auto-shoot
+RunService.Heartbeat:Connect(function()
+    if getgenv().Rake.Settings.ForceHit and enabled then
+        local currentTime = tick()
+
+        -- Throttle the force hit to every 0.1 seconds
+        if currentTime - lastForceHitTime >= forceHitCooldown then
+            Plr, ClosestPart = findNearestEnemy()
+
+            if ClosestPart and Plr and not isInForceField(Plr.Character) then
+                -- Auto-shoot functionality (force-hit)
+                local CurrentPosition = LocalPlayer.Character.HumanoidRootPart.Position
+                local ShootDirection = LocalPlayer.Character.HumanoidRootPart.CFrame.LookVector
+                local ShootPosition = CurrentPosition + ShootDirection * 10
+                local Normal = ShootDirection.unit
+                local Offset = Normal * 0.5
+
+                local Args = {
+                    "Shoot",
+                    {
+                        {
+                            {Normal = Normal, Instance = ClosestPart, Position = CurrentPosition}
+                        },
+                        {
+                            {thePart = ClosestPart, theOffset = CFrame.new(Offset)}
+                        },
+                        ShootPosition,
+                        CurrentPosition,
+                        tick()
+                    }
+                }
+
+                -- Send the force hit request to the server
+                ReplicatedStorage.MainEvent:FireServer(unpack(Args))
+
+                -- Update the last force hit time
+                lastForceHitTime = currentTime
+            end
+        end
+    end
+end)
+
+-- GUI Button to Toggle Enabled State
+local Sigmaballs = Instance.new("ScreenGui")
+local ImageButton = Instance.new("ImageButton")
+local Ui2corner = Instance.new("UICorner")
+
+Sigmaballs.Name = "Sigmaballs"
+Sigmaballs.Parent = game.CoreGui
+Sigmaballs.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+Sigmaballs.ResetOnSpawn = false
+
+ImageButton.Name = "ImageButton"
+ImageButton.Parent = Sigmaballs
+ImageButton.Active = true
+ImageButton.Draggable = true
+ImageButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+ImageButton.BackgroundTransparency = 0.35
+ImageButton.Size = UDim2.new(0, 90, 0, 90)  -- Button size
+ImageButton.Image = "rbxassetid://3230031816"  -- Image ID for the button
+ImageButton.Position = UDim2.new(0.5, -45, 0.5, -45)
+ImageButton.ImageTransparency = 0  -- Make sure the image is fully visible
+
+Ui2corner.CornerRadius = UDim.new(0.2, 0)
+Ui2corner.Parent = ImageButton
+
+ImageButton.MouseButton1Click:Connect(function()
+    enabled = not enabled
+    if enabled then
+        ImageButton.Image = "rbxassetid://3230031816"  -- Keep the button's image visible
+        Plr, ClosestPart = findNearestEnemy()
+        highlight(Plr)
+    else
+        ImageButton.Image = "rbxassetid://134820707156642"  -- Toggle to a different image when disabled
+        if Plr and Plr.Character then
+            for _, obj in pairs(Plr.Character:GetChildren()) do
+                if obj:IsA("Highlight") then
+                    obj:Destroy()
+                end
+            end
+        end
+        Plr, ClosestPart = nil, nil
+    end
+end)
+
+-- Bypass function for the virtualize method
+local mt = getrawmetatable(game)
+local old = mt.__index
+setreadonly(mt, false)
+
+local PredictionValue = getgenv().Rake.Settings.Prediction
+
+old = hookmetamethod(game, "__index", LPH_NO_VIRTUALIZE( function(t, k)
+    mt.__index = newcclosure(function(self, key)
+        if not checkcaller() and enabled and typeof(self) == "Instance" and self:IsA("Mouse") and key == "Hit" then
+            if Plr and Plr.Character and Plr.Character:FindFirstChild(getgenv().Rake.Settings.AimPart) then
+                local target = Plr.Character[getgenv().Rake.Settings.AimPart]
+                local Position = target.Position + (Plr.Character.Head.Velocity * PredictionValue)
+                return CFrame.new(Position)
+            end
+        end
+        return old(self, key)
+    end)
+end))
